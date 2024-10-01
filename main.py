@@ -1,6 +1,7 @@
 import requests
 import threading
 import os
+from queue import Queue
 
 # Clear console based on the system type
 os.system('cls' if os.name == 'nt' else 'clear')  
@@ -10,6 +11,7 @@ timeout = 1  # Timeout in seconds
 allow_redirects = True  # Allow redirects
 urls_file = 'urls.txt'
 http_codes_file = 'httpcodes.txt'
+num_threads = 10  # Number of worker threads
 
 # ANSI escape codes for colors
 GREEN = '\033[92m'
@@ -52,13 +54,18 @@ def check_url(url, http_codes, timeout=timeout):
     except requests.exceptions.RequestException as e:
         return f"{RED}Error: {url} ({e}){RESET}", None
 
-# Function to run the URL checking in a separate thread
-def run_check(url, http_codes, ok_urls):
-    print(f"Checking domain: {url}")  # Print the domain being checked
-    result, ok_url = check_url(url, http_codes)
-    print(result)
-    if ok_url:
-        ok_urls.append(ok_url)
+# Worker function to process URLs from the queue
+def worker(queue, http_codes, ok_urls):
+    while not queue.empty():
+        url = queue.get()
+        if url is None:
+            break
+        print(f"Checking domain: {url}")  # Print the domain being checked
+        result, ok_url = check_url(url, http_codes)
+        print(result)
+        if ok_url:
+            ok_urls.append(ok_url)
+        queue.task_done()
 
 # Main logic
 try:
@@ -66,17 +73,21 @@ try:
     http_codes = read_http_codes(http_codes_file)
 
     ok_urls = []  # List to store URLs with "OK" or expected status codes
-    threads = []
+    queue = Queue()
 
-    # Create a thread for each URL
+    # Enqueue all URLs
     for url in urls:
-        thread = threading.Thread(target=run_check, args=(url, http_codes, ok_urls))
+        queue.put(url)
+
+    # Create worker threads
+    threads = []
+    for _ in range(num_threads):
+        thread = threading.Thread(target=worker, args=(queue, http_codes, ok_urls))
         thread.start()
         threads.append(thread)
 
     # Wait for all threads to complete
-    for thread in threads:
-        thread.join()
+    queue.join()
 
 except KeyboardInterrupt:
     print("\nProcess interrupted by user.")
